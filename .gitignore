@@ -1,0 +1,37 @@
+# Dependencies and generated output
+node_modules/
+.npm/
+.wrangler/
+.build/
+.deploy/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local credentials and signing keys; only the blank template is tracked
+.env*
+!.env.deploy.example
+.dev.vars*
+.secrets*
+secrets*.json
+session-secret
+*.key
+*.pem
+*.p12
+*.pfx
+.aws/
+
+# Local session exports and agent configuration
+codex-session-*.md
+.codex/
+.agents/
+
+# Logs, editor files, and local Git export artifacts
+*.log
+*.bundle
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

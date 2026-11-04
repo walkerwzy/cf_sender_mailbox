@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>登录 · 私人邮局</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/login.js" defer></script>
+  </head>
+  <body class="login-page">
+    <main class="login-panel">
+      <a class="brand login-brand" href="/"><span class="brand-mark">W.</span><span>私人邮局<small>WALKER’S MAILROOM</small></span></a>
+      <div class="eyebrow">WELCOME BACK</div>
+      <h1>登录你的邮局</h1>
+      <p class="login-description">选择一种方式，开始写一封邮件。</p>
+      <div id="login-notice" class="notice error" role="status" aria-live="polite" hidden></div>
+      <form id="login-form" class="login-form">
+        <label for="login-email">发件邮箱</label>
+        <select id="login-email" name="email" autocomplete="username" required disabled><option value="">正在读取邮箱…</option></select>
+        <label for="login-password">密码</label>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="请输入今日密码" maxlength="512" required disabled aria-describedby="password-hint" />
+        <p id="password-hint" class="login-hint">密码为固定前缀 + 当天 MMDD，日期按北京时间计算。</p>
+        <button id="login-submit" class="send-button" type="submit" disabled>密码登录</button>
+      </form>
+      <div class="login-divider"><span>或</span></div>
+      <a id="access-login" class="access-login" href="/auth/access">使用邮箱验证码登录 <span>↗</span></a>
+      <noscript><p class="notice">密码登录需要 JavaScript，也可以使用邮箱验证码登录。</p></noscript>
+      <footer class="login-footer">WALKER · MAILROOM</footer>
+    </main>
+  </body>
+</html>

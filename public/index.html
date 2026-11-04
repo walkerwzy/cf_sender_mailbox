@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>私人邮局 · walker</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m3 7 9 6 9-6"/></symbol>
+      <symbol id="i-compose" viewBox="0 0 24 24"><path d="M12 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7M16 3a2.1 2.1 0 0 1 3 3l-9 9-4 1 1-4Z"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="m21 3-7 18-4-7-7-4 18-7ZM10 14 21 3"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+      <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M14 8l4 4-4 4M8 12h10"/></symbol>
+    </svg>
+
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="工作空间">
+        <a class="brand" href="/" aria-label="私人邮局首页">
+          <span class="brand-mark"><svg class="icon"><use href="#i-mail"/></svg></span>
+          <span>私人邮局<small>WALKER’S MAILROOM</small></span>
+        </a>
+        <div class="space-label">工作空间 <span>01</span></div>
+        <nav class="workspace-nav" aria-label="邮件导航">
+          <a id="nav-compose" class="nav-item" href="#compose" aria-current="page" aria-controls="compose-panel"><svg class="icon"><use href="#i-compose"/></svg>新建邮件</a>
+          <a id="nav-outbox" class="nav-item" href="#outbox" aria-controls="outbox-panel"><svg class="icon"><use href="#i-send"/></svg>发件箱</a>
+        </nav>
+
+        <div class="sender-note">
+          <div class="note-mark">W.</div>
+          <p>每一封邮件，<br/>都来自你。</p>
+          <span>登录邮箱即发件地址</span>
+          <div class="note-line"></div>
+        </div>
+
+        <div class="sidebar-bottom">
+          <div class="privacy"><svg class="icon"><use href="#i-lock"/></svg><span id="access-label">仅授权成员可访问</span></div>
+          <div class="account"><div class="avatar">w</div><div class="account-details"><strong>walker</strong><span id="account-email">正在验证登录…</span></div><a id="logout" href="/cdn-cgi/access/logout" title="退出登录" aria-label="退出登录"><svg class="icon"><use href="#i-logout"/></svg></a></div>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar"><div class="breadcrumb">工作空间<span>/</span><strong id="breadcrumb-page">新建邮件</strong></div><div class="domain-badge"><span class="status-dot"></span><span id="domain">私人空间</span></div></header>
+        <div class="workspace">
+          <div class="page-heading"><div><div id="page-eyebrow" class="eyebrow">A NOTE FROM YOU</div><h1><span id="page-title">新建邮件</span><span>↗</span></h1><p id="page-description">写下想说的话，送到对方的收件箱。</p></div><span id="page-index" class="page-index">MAIL / 001</span></div>
+
+          <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+          <noscript><div class="notice">请启用 JavaScript 后发送邮件。</div></noscript>
+
+          <section id="compose-panel" aria-label="新建邮件">
+          <form id="mail-form" class="compose-card">
+            <div class="compose-heading"><div><span class="paper-dot"></span><strong>邮件正文</strong></div><span class="private-tag"><svg class="icon"><use href="#i-lock"/></svg>私人发信</span></div>
+            <div class="address-fields">
+              <div class="field-row from-row"><span class="field-label">发件人</span><div class="sender-chip"><span class="mini-avatar">w</span><span id="sender">正在读取发件人…</span><svg class="icon"><use href="#i-check"/></svg></div></div>
+              <div class="field-row"><label class="field-label" for="to">收件人</label><input id="to" name="to" autocomplete="off" placeholder="name@example.com" required maxlength="6000"/><button class="text-button recipients-toggle" type="button" id="toggle-extra" aria-expanded="false" aria-controls="extra-fields">抄送 / 密送</button></div>
+              <div id="extra-fields" hidden>
+                <div class="field-row"><label class="field-label" for="cc">抄送</label><input id="cc" name="cc" autocomplete="off" placeholder="可选，多个邮箱用逗号分隔" maxlength="6000"/></div>
+                <div class="field-row"><label class="field-label" for="bcc">密送</label><input id="bcc" name="bcc" autocomplete="off" placeholder="可选，对其他收件人隐藏" maxlength="6000"/></div>
+                <div class="field-row"><label class="field-label" for="reply-to">回复地址</label><input id="reply-to" name="replyTo" type="email" autocomplete="off" placeholder="可选，默认回复给发件人" maxlength="254"/></div>
+              </div>
+              <div class="field-row subject-row"><label class="field-label" for="subject">主题</label><input id="subject" name="subject" placeholder="给这封邮件起个标题" required maxlength="200"/></div>
+            </div>
+            <div class="editor-toolbar"><div class="format-control" role="group" aria-label="正文格式"><button id="text-format" type="button" class="format-button active" aria-pressed="true" data-format="text">纯文本</button><button id="html-format" type="button" class="format-button" aria-pressed="false" data-format="html"><span class="code-icon">&lt;/&gt;</span> HTML</button></div><span id="format-hint">简单、清晰，专注于内容</span></div>
+            <label class="sr-only" for="body">邮件正文</label>
+            <textarea id="body" name="body" placeholder="你好，&#10;&#10;从这里开始写一封邮件…" required maxlength="60000" spellcheck="true"></textarea>
+            <div class="compose-footer"><div class="footer-actions"><button id="send-button" class="send-button" type="submit" disabled><svg class="icon"><use href="#i-send"/></svg><span id="send-label">发送邮件</span></button><button id="clear-button" class="text-button clear-button" type="button">清空</button></div><span class="character-count"><span id="character-count">0</span><span> / 60,000</span></span></div>
+          </form>
+
+          <div class="below-compose"><span><svg class="icon"><use href="#i-mail"/></svg>多个收件人用逗号分隔，最多 20 位</span><span>每分钟最多 5 封</span></div>
+          </section>
+
+          <section id="outbox-panel" aria-label="发件箱" hidden>
+            <div id="outbox-notice" class="notice" role="status" aria-live="polite" hidden></div>
+            <div id="outbox-list-view" class="compose-card">
+              <div class="compose-heading"><div><span class="paper-dot"></span><strong>已发送邮件</strong></div><button id="outbox-refresh" class="text-button" type="button">刷新</button></div>
+              <p id="outbox-empty" class="outbox-empty">正在读取邮件…</p>
+              <ul id="outbox-list" class="outbox-list" aria-label="已发送邮件列表"></ul>
+              <div class="outbox-footer"><span id="outbox-count">0 封邮件</span><button id="outbox-more" class="text-button" type="button" hidden>加载更多</button></div>
+            </div>
+            <article id="outbox-detail" class="compose-card" hidden>
+              <div class="compose-heading"><button id="outbox-back" class="text-button" type="button">← 返回发件箱</button><span id="detail-status" class="mail-status"></span></div>
+              <div class="mail-detail-content">
+                <h2 id="detail-subject" tabindex="-1"></h2>
+                <dl id="detail-addresses" class="detail-addresses"></dl>
+                <div id="detail-formats" class="format-control" role="group" aria-label="查看正文格式"><button id="detail-text" class="format-button" type="button" aria-pressed="true">纯文本</button><button id="detail-html" class="format-button" type="button" aria-pressed="false">HTML 源码</button></div>
+                <pre id="detail-body" class="mail-body"></pre>
+              </div>
+            </article>
+            <div class="below-compose"><span>仅显示当前发件邮箱的邮件</span><span>时间为北京时间 · 历史记录以 Resend 可查询范围为准</span></div>
+          </section>
+          <footer class="workspace-footer"><span>让沟通，保留一点温度。</span><span>WALKER · MAILROOM</span></footer>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>
