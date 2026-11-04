@@ -104,12 +104,12 @@ test("invalid mail IDs, queries, methods and rate limits cannot reach Resend", a
   assert.equal((await call("/api/outbox", { ...env, OUTBOX_RATE_LIMITER: undefined })).status, 503);
 });
 
-test("reading falls back to the existing API key without uploading the domain admin key", async (t) => {
+test("reading falls back to the existing API key when no read secret was supplied", async (t) => {
   t.mock.method(globalThis, "fetch", async (input, init) => {
     assert.equal(init.headers.Authorization, `Bearer ${env.RESEND_API_KEY}`);
     return Response.json({ data: [], has_more: false });
   });
-  assert.equal((await call("/api/outbox", { ...env, RESEND_READ_API_KEY: undefined, RESEND_ADMIN_API_KEY: "local-admin-secret" })).status, 200);
+  assert.equal((await call("/api/outbox", { ...env, RESEND_READ_API_KEY: undefined })).status, 200);
 });
 
 test("upstream errors and redirects never leak secrets or follow another origin", async (t) => {

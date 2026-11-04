@@ -84,11 +84,13 @@ Zone 范围选 `wzy.one`。如果 Resend 已验证发件域名，部署不会修
 
 | 变量 | 用途 | 权限 | 上传 Worker |
 | --- | --- | --- | --- |
-| `RESEND_API_KEY` | 发送邮件；未指定读取 Key 时也用于读取 | Sending access 或 Full access | 是 |
+| `RESEND_API_KEY` | 发送邮件；未指定读取或管理 Key 时也用于读取 | Sending access 或 Full access | 是 |
 | `RESEND_READ_API_KEY` | 可选，单独读取发件箱 | Full access | 配置时上传 |
-| `RESEND_ADMIN_API_KEY` | 可选，命令行管理发件域名；未指定时用发送 Key | Full access | 否 |
+| `RESEND_ADMIN_API_KEY` | 可选，命令行管理发件域名，并默认复用于发件箱 | Full access | 未指定读取 Key 时，以 `RESEND_READ_API_KEY` Secret 名上传 |
 
-如果现有 `RESEND_API_KEY` 只有 Sending access，在 `.env.deploy` 补充 `RESEND_READ_API_KEY=你的FullAccessKey`，再运行 `npm run deploy:worker`。Resend 没有独立的只读 Key 权限；读取 Key 应始终保存在服务端 Secret 中。`RESEND_ADMIN_API_KEY` 只用于本地部署，不会自动转用或上传给发件箱。读取授权失败会显示错误，不影响发送邮件。
+读取优先级为 `RESEND_READ_API_KEY` → `RESEND_ADMIN_API_KEY` → `RESEND_API_KEY`。已有 Full access 的 `RESEND_ADMIN_API_KEY` 时无需增加配置，直接运行 `npm run deploy:worker`；脚本会自动将它作为 Worker 的 `RESEND_READ_API_KEY` Secret 上传，发送仍使用 `RESEND_API_KEY`。如希望单独指定发件箱凭证，再填写 `RESEND_READ_API_KEY`。
+
+Resend 没有独立的只读 Key 权限；读取 Key 应始终保存在服务端 Secret 中。如果只配置了 Sending access 的发送 Key，需要补充一个 Full access 的管理或读取 Key。读取授权失败会显示错误，不影响发送邮件。
 
 ### 发件箱
 

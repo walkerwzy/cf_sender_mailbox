@@ -21,6 +21,8 @@ const policyName = "Mailroom members";
 let local = {};
 try { local = parseEnv(await readFile(resolve(root, ".env.deploy"), "utf8")); } catch (error) { if (error.code !== "ENOENT") throw error; }
 const config = { ...local, ...Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== "")) };
+// Reuse the existing full-access admin key unless a dedicated read key is supplied.
+const outboxReadKey = config.RESEND_READ_API_KEY || config.RESEND_ADMIN_API_KEY;
 const sensitive = [config.CLOUDFLARE_API_TOKEN, config.RESEND_API_KEY, config.RESEND_ADMIN_API_KEY, config.RESEND_READ_API_KEY, config.LOGIN_PASSWORD, config.SESSION_SECRET].filter(Boolean);
 const redact = (text) => sensitive.reduce((result, value) => result.replaceAll(value, "[REDACTED]"), String(text));
 
@@ -123,7 +125,8 @@ async function main() {
   console.log(`允许登录：${emails.join("、")}`);
   console.log(`页面地址：https://${domain}`);
   console.log(loginMode === "dual" ? "登录方式：密码 + 北京时间 MMDD，或邮箱验证码。" : "登录方式：邮箱验证码。");
-  const onlineCheck = { cloudflare, accountId, domain, customDomain: Boolean(config.APP_DOMAIN), teamDomain, audience: app.aud, emails, loginMode, readApiKeyConfigured: Boolean(config.RESEND_READ_API_KEY) };
+  console.log(`发件箱读取凭证：${config.RESEND_READ_API_KEY ? "RESEND_READ_API_KEY" : config.RESEND_ADMIN_API_KEY ? "复用 RESEND_ADMIN_API_KEY" : "复用 RESEND_API_KEY"}。`);
+  const onlineCheck = { cloudflare, accountId, domain, customDomain: Boolean(config.APP_DOMAIN), teamDomain, audience: app.aud, emails, loginMode, readApiKeyConfigured: Boolean(outboxReadKey) };
   if (checkOnly) {
     await checkWorkerDeployment(onlineCheck);
     await checkAnonymousAccess({ domain, teamDomain, loginMode });
@@ -148,7 +151,7 @@ async function main() {
   const configPath = resolve(root, workerOnly ? ".deploy/wrangler-worker.json" : ".deploy/wrangler.json");
   const secretPath = resolve(root, ".deploy/secrets.json");
   const workerSecrets = { RESEND_API_KEY: config.RESEND_API_KEY };
-  if (config.RESEND_READ_API_KEY) workerSecrets.RESEND_READ_API_KEY = config.RESEND_READ_API_KEY;
+  if (outboxReadKey) workerSecrets.RESEND_READ_API_KEY = outboxReadKey;
   if (loginMode === "dual") {
     workerSecrets.LOGIN_PASSWORD = config.LOGIN_PASSWORD;
     workerSecrets.SESSION_SECRET = await getSessionSecret(resolve(root, ".deploy"), config.SESSION_SECRET);
