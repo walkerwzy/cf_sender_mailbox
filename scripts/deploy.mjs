@@ -1,5 +1,4 @@
 import { readFile, writeFile, mkdir, unlink, chmod } from "node:fs/promises";
-import { spawn } from "node:child_process";
 import { parseEnv } from "node:util";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +10,7 @@ import { deployWorkerVersion } from "./worker-version.mjs";
 import { planAccessScope, applyAccessScope } from "./access-scope.mjs";
 import { getSessionSecret } from "./session-secret.mjs";
 import { makeApi } from "./api.mjs";
+import { runWrangler } from "./wrangler-command.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const checkOnly = process.argv.includes("--check");
@@ -26,25 +26,8 @@ const outboxReadKey = config.RESEND_READ_API_KEY || config.RESEND_ADMIN_API_KEY;
 const sensitive = [config.CLOUDFLARE_API_TOKEN, config.RESEND_API_KEY, config.RESEND_ADMIN_API_KEY, config.RESEND_READ_API_KEY, config.LOGIN_PASSWORD, config.SESSION_SECRET].filter(Boolean);
 const redact = (text) => sensitive.reduce((result, value) => result.replaceAll(value, "[REDACTED]"), String(text));
 
-async function command(args, env = {}, quiet = false) {
-  return new Promise((resolveCommand, reject) => {
-    const child = spawn("wrangler", args, {
-      cwd: root,
-      env: { ...process.env, ...env, WRANGLER_SEND_METRICS: "false", WRANGLER_LOG_PATH: resolve(root, ".deploy/wrangler.log") },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.on("error", () => reject(new Error("找不到 Wrangler。请先运行 npm install。")));
-    child.on("close", (code) => {
-      if (!quiet && stdout) process.stdout.write(redact(stdout));
-      if (!quiet && stderr) process.stderr.write(redact(stderr));
-      if (code !== 0) reject(new Error(quiet ? "无法读取 Cloudflare 登录状态。请配置 CLOUDFLARE_API_TOKEN。" : `Wrangler 执行失败（退出码 ${code}）。`));
-      else resolveCommand(stdout);
-    });
-  });
+function command(args, env = {}) {
+  return runWrangler(args, { cwd: root, env, sensitive });
 }
 
 async function main() {
