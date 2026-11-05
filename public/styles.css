@@ -103,6 +103,16 @@ textarea:focus { box-shadow: inset 3px 0 #c3d0b3; }
 .notice.error { background: #fff4ee; color: #9f5239; border-color: #f0dccf; }
 .notice a { text-decoration: underline; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.attachments-panel { padding: 16px 26px; border-top: 1px solid var(--line); }
+.attachments-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; font-size: 12px; }
+.attachments-toolbar select { margin-left: auto; max-width: 100%; padding: 6px 10px; font: inherit; color: var(--green); border: 1px solid var(--line); background: #f7f9f3; border-radius: 6px; }
+.attachment-hint { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.attachment-list { list-style: none; padding: 0; margin: 0; }
+.attachment-list li { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.attachment-list li > span { min-width: 0; }
+.attachment-list strong { display: block; overflow-wrap: anywhere; font-size: 12px; font-weight: 500; }
+.attachment-list small { display: block; color: var(--muted); margin-top: 3px; font-size: 10px; }
+@media (max-width: 760px) { .attachments-panel { padding: 16px 18px; } }
 .outbox-list { list-style: none; margin: 0; padding: 0; }
 .outbox-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); background: #fff; padding: 19px 26px; color: var(--ink); }
 .outbox-row:hover { background: #f7f9f3; }

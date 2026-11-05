@@ -4,7 +4,7 @@ function normalizedEmails(value) {
 
 // Inspect the deployed Worker, including uploads whose later domain binding failed.
 // All API calls are reads; a manually bound domain needs no zone-route permissions.
-export async function checkWorkerDeployment({ cloudflare, accountId, domain, customDomain, teamDomain, audience, emails, loginMode = "access", readApiKeyConfigured = false, workerName = "sendmail-cf", log = console.log }) {
+export async function checkWorkerDeployment({ cloudflare, accountId, domain, customDomain, teamDomain, audience, emails, loginMode = "access", readApiKeyConfigured = false, attachmentBucket, workerName = "sendmail-cf", log = console.log }) {
   const base = `/accounts/${accountId}/workers`;
   const script = `${base}/scripts/${encodeURIComponent(workerName)}`;
   let settings;
@@ -37,6 +37,16 @@ export async function checkWorkerDeployment({ cloudflare, accountId, domain, cus
   }
   if (!secrets.some((secret) => secret.name === "RESEND_API_KEY" && secret.type === "secret_text")) problems.push("Worker 缺少 RESEND_API_KEY Secret");
   if (readApiKeyConfigured && !secrets.some((secret) => secret.name === "RESEND_READ_API_KEY" && secret.type === "secret_text")) problems.push("Worker 缺少 RESEND_READ_API_KEY Secret");
+  if (attachmentBucket) {
+    for (const [name, text] of Object.entries({ R2_ACCOUNT_ID: accountId, R2_BUCKET_NAME: attachmentBucket })) {
+      if (!bindings.some((binding) => binding.name === name && binding.type === "plain_text" && binding.text === text)) problems.push(`Worker 变量 ${name} 与附件配置不一致`);
+    }
+    for (const name of ["R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) {
+      if (!secrets.some((secret) => secret.name === name && secret.type === "secret_text")) problems.push(`Worker 缺少 ${name} Secret`);
+    }
+    if (!bindings.some((binding) => binding.name === "ATTACHMENTS_BUCKET" && binding.type === "r2_bucket" && binding.bucket_name === attachmentBucket)) problems.push("Worker 缺少正确的 ATTACHMENTS_BUCKET R2 绑定");
+    if (!bindings.some((binding) => binding.name === "UPLOAD_RATE_LIMITER" && binding.type === "ratelimit" && binding.simple?.limit === 10 && binding.simple?.period === 60)) problems.push("Worker 的 UPLOAD_RATE_LIMITER 应为每分钟 10 次");
+  }
   if (loginMode === "dual") {
     for (const name of ["LOGIN_PASSWORD", "SESSION_SECRET"]) {
       if (!secrets.some((secret) => secret.name === name && secret.type === "secret_text")) problems.push(`Worker 缺少 ${name} Secret`);

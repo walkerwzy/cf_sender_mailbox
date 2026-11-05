@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleRequest, validateMail } from "../src/worker.js";
 import devWorker from "../src/dev-worker.js";
+import { ATTACHMENT_LIMITS } from "../src/attachments.js";
 
 const origin = "https://mail.wzy.one";
 const key = "f12e0ef2-c8b3-4ba5-9cd7-13e096efa42f";
@@ -23,7 +24,7 @@ test("page and API deny anonymous requests and ignore preview flags in productio
 
 test("session displays walker and the authenticated email", async () => {
   const response = await handleRequest(new Request(`${origin}/api/session`), env, {}, { authenticate });
-  assert.deepEqual(await response.json(), { email: "hi@wzy.one", from: "walker <hi@wzy.one>", preview: false, ready: true, loginMethod: "access" });
+  assert.deepEqual(await response.json(), { email: "hi@wzy.one", from: "walker <hi@wzy.one>", preview: false, ready: true, loginMethod: "access", attachmentLimits: ATTACHMENT_LIMITS, attachmentReady: false });
 });
 
 test("protects authenticated static responses with security headers", async () => {

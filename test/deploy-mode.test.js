@@ -45,9 +45,14 @@ globalThis.fetch = async (input, init = {}) => {
   else if (path.endsWith("/policies")) result = [{ name: "Mailroom members", decision: "allow", include: ["admin@wzy.one", "hi@wzy.one"].map((email) => ({ email: { email } })), exclude: [], require: [] }];
   else if (path.endsWith("/settings")) {
     const config = JSON.parse(readFileSync(root + "/.deploy/wrangler-worker.json", "utf8"));
-    result = { bindings: [...Object.entries(config.vars).map(([name, text]) => ({ name, text, type: "plain_text" })), { name: "ASSETS", type: "assets" }, ...config.ratelimits.map((binding) => ({ ...binding, type: "ratelimit" }))] };
+    result = { bindings: [...Object.entries(config.vars).map(([name, text]) => ({ name, text, type: "plain_text" })), { name: "ASSETS", type: "assets" }, ...config.ratelimits.map((binding) => ({ ...binding, type: "ratelimit" })), ...(config.r2_buckets || []).map((binding) => ({ name: binding.binding, bucket_name: binding.bucket_name, type: "r2_bucket" }))] };
   }
-  else if (path.endsWith("/secrets")) result = ["RESEND_API_KEY", "RESEND_READ_API_KEY", "LOGIN_PASSWORD", "SESSION_SECRET"].map((name) => ({ name, type: "secret_text" }));
+  else if (path.endsWith("/secrets")) result = ["RESEND_API_KEY", "RESEND_READ_API_KEY", "LOGIN_PASSWORD", "SESSION_SECRET", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"].map((name) => ({ name, type: "secret_text" }));
+  else if (path.includes("/r2/buckets/")) {
+    if (path.endsWith("/domains/managed") || path.endsWith("/domains/custom")) throw new Error("Attachment setup must not inspect or modify public domains");
+    else if (path.endsWith("/cors") || path.endsWith("/lifecycle")) result = { rules: [] };
+    else result = { name: process.env.R2_BUCKET_NAME };
+  }
   else if (path.endsWith("/subdomain")) result = { enabled: false, previews_enabled: false };
   else if (path.endsWith("/workers/domains")) result = [{ hostname: "mail.wzy.one", service: "sendmail-cf", environment: "production" }];
   else throw new Error("Unexpected Cloudflare API request: " + path);
@@ -66,12 +71,16 @@ if (args[1] === "upload") {
   if (!secrets.LOGIN_PASSWORD || !secrets.SESSION_SECRET || config.vars.LOGIN_MODE !== "dual") throw new Error("Dual-login secrets missing");
   const expectedReadKey = process.env.RESEND_READ_API_KEY || process.env.RESEND_ADMIN_API_KEY || undefined;
   if (secrets.RESEND_READ_API_KEY !== expectedReadKey || secrets.RESEND_ADMIN_API_KEY || config.vars.RESEND_READ_API_KEY) throw new Error("Outbox key priority or secret storage is incorrect");
+  if (process.env.R2_BUCKET_NAME) {
+    if (config.vars.R2_ACCOUNT_ID !== process.env.CLOUDFLARE_ACCOUNT_ID || config.vars.R2_BUCKET_NAME !== process.env.R2_BUCKET_NAME || config.r2_buckets[0].binding !== "ATTACHMENTS_BUCKET") throw new Error("R2 binding missing");
+    if (config.vars.R2_ACCESS_KEY_ID || config.vars.R2_SECRET_ACCESS_KEY || secrets.R2_ACCESS_KEY_ID !== process.env.R2_ACCESS_KEY_ID || secrets.R2_SECRET_ACCESS_KEY !== process.env.R2_SECRET_ACCESS_KEY) throw new Error("R2 keys must be private Worker secrets");
+  }
   record({ event: "worker-upload" });
   console.log("Worker Version ID: f12e0ef2-c8b3-4ba5-9cd7-13e096efa42f");
 } else if (args[1] === "deploy") record({ event: "worker-live" });
 else throw new Error("Unexpected command");
 `, { mode: 0o700 });
-    const env = { ...process.env, NODE_OPTIONS: "", PATH: root + delimiter + process.env.PATH, CLOUDFLARE_API_TOKEN: "test-cf-token", CLOUDFLARE_ACCOUNT_ID: "a".repeat(32), RESEND_API_KEY: "test-resend-key", RESEND_ADMIN_API_KEY: "test-admin-key", RESEND_READ_API_KEY: "test-read-key", ACCESS_TEAM_DOMAIN: "", APP_DOMAIN: "mail.wzy.one", ALLOWED_EMAILS: "admin@wzy.one,hi@wzy.one", LOGIN_PASSWORD: "test-password-prefix", SESSION_SECRET: "test-session-signing-secret-more-than-32", MAIL_FROM_NAME: "walker" };
+    const env = { ...process.env, NODE_OPTIONS: "", PATH: root + delimiter + process.env.PATH, CLOUDFLARE_API_TOKEN: "test-cf-token", CLOUDFLARE_ACCOUNT_ID: "a".repeat(32), RESEND_API_KEY: "test-resend-key", RESEND_ADMIN_API_KEY: "test-admin-key", RESEND_READ_API_KEY: "test-read-key", ACCESS_TEAM_DOMAIN: "", APP_DOMAIN: "mail.wzy.one", ALLOWED_EMAILS: "admin@wzy.one,hi@wzy.one", LOGIN_PASSWORD: "test-password-prefix", SESSION_SECRET: "test-session-signing-secret-more-than-32", MAIL_FROM_NAME: "walker", R2_BUCKET_NAME: "", R2_ACCESS_KEY_ID: "", R2_SECRET_ACCESS_KEY: "" };
     const run = (flag, overrides = {}) => promisify(execFile)(process.execPath, ["--import", mockPath, join(root, "scripts/deploy.mjs"), flag], { cwd: root, env: { ...env, ...overrides } });
     await assert.rejects(run("--check"), (error) => { assert.match(error.stderr, /Access 登录范围需要更新/); return true; });
     const initial = (await readFile(tracePath, "utf8")).trim().split("\n").map(JSON.parse);
@@ -94,5 +103,17 @@ else throw new Error("Unexpected command");
     const sendingFallback = await run("--worker-only", { RESEND_READ_API_KEY: "", RESEND_ADMIN_API_KEY: "" });
     assert.match(sendingFallback.stdout, /复用 RESEND_API_KEY/);
     assert.ok(!sendingFallback.stdout.includes(env.RESEND_API_KEY));
+    await writeFile(tracePath, "");
+    await writeFile(join(root, ".env.deploy"), "R2_BUCKET_NAME=local-fallback-bucket\n");
+    const r2 = { R2_BUCKET_NAME: "tmpfile", R2_ACCESS_KEY_ID: "test-s3-access-key", R2_SECRET_ACCESS_KEY: "test-s3-secret-key-with-more-than-32-characters" };
+    const withAttachments = await run("--worker-only", r2);
+    assert.match(withAttachments.stdout, /附件存储：R2 tmpfile，前缀 attachment\//);
+    assert.match(withAttachments.stdout, /部署完成/);
+    assert.ok(!withAttachments.stdout.includes(r2.R2_SECRET_ACCESS_KEY) && !withAttachments.stdout.includes(r2.R2_ACCESS_KEY_ID));
+    const r2Events = (await readFile(tracePath, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.ok(r2Events.some((event) => event.path?.endsWith("/cors") && event.method === "PUT"));
+    assert.ok(r2Events.some((event) => event.path?.endsWith("/lifecycle") && event.method === "PUT"));
+    assert.ok(r2Events.every((event) => !event.path?.startsWith("/zones")));
+    await assert.rejects(access(join(root, ".deploy/secrets.json")), { code: "ENOENT" });
   } finally { await rm(root, { recursive: true, force: true }); }
 });

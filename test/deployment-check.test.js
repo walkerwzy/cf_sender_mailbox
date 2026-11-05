@@ -52,6 +52,17 @@ test("checks an explicitly configured outbox key and read rate limiter", async (
   await assert.rejects(checkWorkerDeployment({ ...options, readApiKeyConfigured: true, cloudflare: api(worker) }), /OUTBOX_RATE_LIMITER/);
 });
 
+test("enabled attachments require the exact R2 bucket/account, both S3 secrets and upload limiter", async () => {
+  const worker = deployedWorker();
+  const check = () => checkWorkerDeployment({ ...options, attachmentBucket: "mailroom-test", cloudflare: api(worker) });
+  await assert.rejects(check(), /R2_ACCOUNT_ID[\s\S]*R2_SECRET_ACCESS_KEY[\s\S]*ATTACHMENTS_BUCKET[\s\S]*UPLOAD_RATE_LIMITER/);
+  worker.settings.bindings.push({ type: "plain_text", name: "R2_ACCOUNT_ID", text: "account" }, { type: "plain_text", name: "R2_BUCKET_NAME", text: "mailroom-test" }, { type: "r2_bucket", name: "ATTACHMENTS_BUCKET", bucket_name: "mailroom-test" }, { type: "ratelimit", name: "UPLOAD_RATE_LIMITER", simple: { limit: 10, period: 60 } });
+  worker.secrets.push(...["R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"].map((name) => ({ name, type: "secret_text" })));
+  await check();
+  worker.settings.bindings.find((binding) => binding.name === "ATTACHMENTS_BUCKET").bucket_name = "other-bucket";
+  await assert.rejects(check(), /ATTACHMENTS_BUCKET/);
+});
+
 test("reports every incomplete upload item without treating an uploaded script as a successful deployment", async () => {
   const worker = deployedWorker();
   worker.settings.bindings = [];

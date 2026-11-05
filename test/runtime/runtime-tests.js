@@ -1,6 +1,8 @@
 import { verifyAccess } from "../../src/access.js";
 import { handleRequest } from "../../src/worker.js";
 import { beijingDay } from "../../src/session.js";
+import { readAttachmentToken } from "../../src/attachments.js";
+import devWorker from "../../src/dev-worker.js";
 
 function assert(condition, message) { if (!condition) throw new Error(message); }
 function encode(bytes) { return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
@@ -135,5 +137,48 @@ export const accessBridgeAndCookie = {
     await assertOutbox({ Cookie: cookie }, env, ctx, "walker <admin@wzy.one>");
     const forged = new Request(`${origin}/auth/access`, { headers: { "Cf-Access-Authenticated-User-Email": "admin@wzy.one" } });
     assert((await handleRequest(forged, env, ctx)).status === 401, "The bridge must require a signed JWT, not an email header");
+  },
+};
+
+export const attachmentsWithBothLogins = {
+  async test(ctrl, bindings, ctx) {
+    const { jwt, env: configured } = await fixture(bindings.UPSTREAM, "runtime-attachments.cloudflareaccess.com", "admin@wzy.one");
+    const objects = new Map();
+    const env = { ...dualEnv(configured), R2_ACCOUNT_ID: "a".repeat(32), R2_BUCKET_NAME: "mailroom-runtime", R2_ACCESS_KEY_ID: "runtime-r2-key", R2_SECRET_ACCESS_KEY: "runtime-r2-secret-at-least-32-characters", ATTACHMENTS_BUCKET: { head: async (key) => objects.get(key) || null }, UPLOAD_RATE_LIMITER: { limit: async () => ({ success: true }) } };
+    const access = await handleRequest(request(jwt, "/auth/access"), env, ctx);
+    const password = await handleRequest(new Request(`${origin}/api/login`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ email: "admin@wzy.one", password: env.LOGIN_PASSWORD + beijingDay().suffix }) }), env, ctx);
+    for (const login of [access, password]) {
+      const cookie = login.headers.get("Set-Cookie").split(";")[0];
+      const post = (path, body) => new Request(`${origin}${path}`, { method: "POST", headers: { Cookie: cookie, Origin: origin, "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify(body) });
+      const upload = await handleRequest(post("/api/attachments/uploads", { files: [{ filename: "文档.pdf", size: 12 }] }), env, ctx);
+      assert(upload.status === 200, `Both login methods must issue upload grants: ${upload.status}`);
+      const [file] = (await upload.json()).files;
+      const data = await readAttachmentToken(file.token, "admin@wzy.one", origin, env, Math.floor(Date.now() / 1000));
+      objects.set(data.key, { size: 12 });
+      const refs = [{ token: file.token }];
+      for (const mode of ["attachment", "link"]) {
+        let payload;
+        const sent = await handleRequest(post("/api/send", { to: "friend@example.com", subject: "文件", body: "查收", format: "text", attachments: refs, attachmentMode: mode }), env, ctx, { sendMail: async (mail) => { payload = mail; return { id: "runtime-attachment-mail" }; } });
+        assert(sent.status === 200, `Workers must prepare ${mode} delivery: ${sent.status}`);
+        if (mode === "attachment") assert(payload.attachments[0].filename === "文档.pdf" && payload.attachments[0].path.includes("X-Amz-Signature="), "Resend gets a signed URL attachment");
+        else assert(!payload.attachments && payload.text.includes("有效期至") && payload.text.includes("X-Amz-Expires=604800"), "Link delivery appends an expiring download link");
+      }
+    }
+  },
+};
+
+export const binaryAttachmentPreview = {
+  async test(ctrl, bindings, ctx) {
+    const site = "http://127.0.0.1:8787";
+    const env = { SEND_RATE_LIMITER: { limit: async () => ({ success: true }) } };
+    const post = (path, body) => new Request(`${site}${path}`, { method: "POST", headers: { Origin: site, "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify(body) });
+    const grants = await devWorker.fetch(post("/api/attachments/uploads", { files: [{ filename: "binary.pdf", size: 4 }] }), env, ctx);
+    assert(grants.status === 200, "Local preview must issue upload grants");
+    const [file] = (await grants.json()).files;
+    const put = () => new Request(file.upload.url, { method: "PUT", headers: { Origin: site, ...file.upload.headers }, body: new Uint8Array([0, 255, 10, 128]) });
+    assert((await devWorker.fetch(put(), env, ctx)).status === 200, "Actual binary stream must upload");
+    assert((await devWorker.fetch(put(), env, ctx)).status === 412, "Uploaded objects must be immutable");
+    const sent = await devWorker.fetch(post("/api/send", { to: "friend@example.com", subject: "附件", body: "查收", format: "text", attachments: [{ token: file.token }] }), env, ctx);
+    assert(sent.status === 200 && (await sent.json()).preview, "Preview must simulate attachment delivery with no external calls");
   },
 };

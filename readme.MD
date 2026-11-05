@@ -58,11 +58,21 @@ LOGIN_PASSWORD=你的固定密码前缀
 
 ### Cloudflare Token
 
-可复用已有 Token，或在 [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) 创建 Custom Token。配置下列权限，并将账号范围限制到你的账号：
+Profile 表示登录用户，Account 表示 Workers、R2、域名等资源所属的账号。一个用户可以加入多个 Account，一个 Account 也可以有多个用户。Token 的归属和它能操作的资源范围是两个概念：个人 Token 同样可以被授予 Account 级别的权限。
+
+UI 中的两个入口：
+
+- **个人 API Token**：右上角头像 → **My Profile** → **API Tokens**（[个人 Token 页面](https://dash.cloudflare.com/profile/api-tokens)）。Token 归属于用户。
+- **账号 API Token**：先选择资源所属的 Account，再从左侧 **Manage Account → Account API Tokens** 进入。Token 归属于该 Account；R2 凭证入口在账号页面中查找。
+
+本项目现有部署凭证已通过 `/user/tokens/verify` 验证，可在个人 Token 页面查找。找不到对应名称时，可以在该页面创建命名为 `sendmail-cf-deploy` 的 Custom Token，填写下列权限，并更新 `.env.deploy` 的 `CLOUDFLARE_API_TOKEN`；其他 R2 S3 凭证无需随之替换。Account API Token 也可用于它支持的账号管理接口，但应根据实际权限和接口支持情况配置，不能仅因归属于 Account 就认为具备 R2 管理权限。
+
+部署 Token 配置下列权限，并将账号范围限制到资源所属的 Account：
 
 | 范围 | 权限 | 级别 | 用途 |
 | --- | --- | --- | --- |
 | Account | Workers Scripts | Edit | 部署 Worker 和 Secret |
+| Account | Workers R2 Storage | Edit | 启用附件时配置 Bucket、CORS 和清理规则 |
 | Account | Account Settings | Read | 发现账号和 workers.dev 子域名 |
 | Account | Access: Apps and Policies | Edit | 创建应用及登录邮箱策略 |
 | Account | Access: Organizations, Identity Providers, and Groups | Edit | 创建或读取 Zero Trust 组织和邮箱验证码登录 |
@@ -91,6 +101,61 @@ Zone 范围选 `wzy.one`。如果 Resend 已验证发件域名，部署不会修
 读取优先级为 `RESEND_READ_API_KEY` → `RESEND_ADMIN_API_KEY` → `RESEND_API_KEY`。已有 Full access 的 `RESEND_ADMIN_API_KEY` 时无需增加配置，直接运行 `npm run deploy:worker`；脚本会自动将它作为 Worker 的 `RESEND_READ_API_KEY` Secret 上传，发送仍使用 `RESEND_API_KEY`。如希望单独指定发件箱凭证，再填写 `RESEND_READ_API_KEY`。
 
 Resend 没有独立的只读 Key 权限；读取 Key 应始终保存在服务端 Secret 中。如果只配置了 Sending access 的发送 Key，需要补充一个 Full access 的管理或读取 Key。读取授权失败会显示错误，不影响发送邮件。
+
+### 附件与大文件下载链接
+
+写信页面点击「添加文件」，默认使用传统附件；可切换为下载链接。文件选择后显示名称和大小，点击发送时先上传，并显示每个文件的进度；切换发件箱会保留文件选择和邮件草稿。
+
+| 方式 | 文件限制 | 收件人如何获得文件 |
+| --- | --- | --- |
+| 传统附件（默认） | 最多 10 个，原始文件合计 25 MiB | 邮件客户端显示附件 |
+| 下载链接 | 最多 10 个，原始文件合计 100 MiB | 正文中包含文件名、下载链接及到期时间 |
+
+文件通过临时签名 PUT URL，从浏览器直接上传原始二进制到 R2，上传和邮件 JSON 不使用 Base64，也不经过 Worker 转发文件。所有新上传文件的对象键为 `attachment/<用户与站点标识>/<随机 UUID>`；R2 控制台显示在 `attachment/` 目录下，原始文件名保存在下载响应的 Content-Disposition 和邮件附件中。传统附件由 Worker 给 Resend 提交 `attachments: [{ filename, path: <临时下载 URL> }]`，Resend 读取文件并生成邮件附件。**Resend 整封邮件 40 MB 的限制仍然存在，包含邮件编码后的体积；URL 附件不能绕过它。**25 MiB 是本站为编码及正文预留空间的原始文件总量限制。下载链接模式不把文件装入邮件，因此可支持更大文件。
+
+邮件中的签名下载链接从上传授权签发时起有效 7 天，收件人不需要本站登录，持有链接即可访问。R2 文件在上传后 10 天通过生命周期规则清理，清空草稿或移除文件不会立刻删除 R2 中的对象，尚未发送的文件也会按此规则清理。传统附件已进入收件人的邮件中，不受 R2 清理影响。
+
+可以复用已有的公开 Bucket，r2.dev 和自有域名都可以保留。私有 Bucket 是访问控制的选择，R2 直传和 Resend 读取附件没有这个技术要求。上传和邮件下载始终使用 R2 S3 API 的签名地址，无需填写公开域名；R2 签名 URL 只能用于 S3 API 域名，不能替换成自有域名。公开 Bucket 的文件也能通过 `https://你的文件域名/attachment/<用户与站点标识>/<随机 UUID>` 访问，这种公开地址不受签名链接 7 天有效期限制，直到对象被删除；域名有缓存时，还可能在缓存到期前返回已删除的文件。`attachment/` 前缀只用于管理和清理，不是独立的私有权限范围。需要文件仅通过有效签名链接访问时，应使用关闭公开访问的专用 Bucket。
+
+启用步骤：
+
+1. 在部署 Worker 的同一 Cloudflare 账号中启用 R2，选择已有 Bucket（公开或私有均可），或新建一个 Bucket，例如 `mailroom-attachments`。
+2. 选择该 Bucket 所属的 Account，从左侧 **Manage Account → Account API Tokens** 进入账号 Token 页面，找到 R2 凭证的创建入口，创建 **Object Read & Write** 凭证，范围仅选择该 Bucket；保存它生成的 **Access Key ID** 和 **Secret Access Key**。如果 R2 Overview 页面提供 **Manage R2 API Tokens** 按钮，也可以从该按钮进入。右上角 My Profile 下的个人 Token 页和这个账号页面是不同入口。
+3. 在 `.env.deploy` 填写以下变量；部署所用 `CLOUDFLARE_API_TOKEN` 另需 **Account → Workers R2 Storage → Edit** 权限。
+
+```dotenv
+R2_BUCKET_NAME=tmpfile
+R2_ACCESS_KEY_ID=你的R2访问KeyID
+R2_SECRET_ACCESS_KEY=你的R2SecretAccessKey
+```
+
+```sh
+npm run deploy:worker
+```
+
+也可以通过环境变量传入 Bucket 名称，非空环境变量会覆盖 `.env.deploy` 中的同名配置。比如复用 `tmpfile`，S3 凭证保存在 `.env.deploy` 或事先设好的环境变量中，再执行：
+
+```sh
+R2_BUCKET_NAME=tmpfile npm run deploy:worker
+```
+
+同样可以运行 `R2_BUCKET_NAME=tmpfile npm run deploy:check` 进行只读检查。
+
+如果 `/accounts/<账号ID>/r2/buckets/tmpfile` 返回 `403 Authentication error`，这个请求使用的是 **`CLOUDFLARE_API_TOKEN`**。按该部署 Token 的归属进入个人或账号 Token 页面，找到它并选择「Edit」：在 Permissions 中添加 **Account → Workers R2 Storage → Edit**，在 Account Resources 中选择包含该 Bucket 的账号，保存后重试部署。账号 ID 应与 R2 后台页面 URL 中的账号 ID、`.env.deploy` 的 `CLOUDFLARE_ACCOUNT_ID` 一致。已有 Workers / Access 权限应保留。若找不到旧 Token，可以创建有明确名称的新部署 Token，按上方权限表配置，并同步更新 `.env.deploy` 或环境变量中的 `CLOUDFLARE_API_TOKEN`；环境变量中的旧值会覆盖文件中的新值。
+
+R2 **Object Read & Write** 生成的 `R2_ACCESS_KEY_ID` 和 `R2_SECRET_ACCESS_KEY` 负责 S3 文件读写，不能代替部署 Token 的 R2 管理权限。`/user/tokens/verify` 返回 `active` 只表示 Token 有效，不代表它有权限管理该账号的 Bucket。`npm run deploy:diagnose` 会针对 R2 的 401/403 显示具体权限和账号范围提示。
+
+`R2_ACCOUNT_ID` 自动取部署账号，无需单独填写。S3 Key 与 Cloudflare 部署 Token 是不同凭证；S3 Secret 只上传到 Worker Secret，不能写入页面或仓库。部署脚本自动创建或检查 Bucket，保留现有公开访问设置和其他 CORS/生命周期规则，并补充当前页面来源的 PUT CORS 和 `attachment/` 前缀的 10 天清理规则。该清理规则作用于 `attachment/` 下的所有对象，包括已有文件；其他前缀的对象不受新增规则影响，旧版 `mailroom-attachments/` 清理规则也会保留。已有更早删除附件的规则（例如临时 Bucket 全桶 1 天清理）会使部署停止，需要调整其前缀或保留时间，或选择专用 Bucket，新增 10 天规则无法覆盖更早的删除规则。`deploy:worker` 也会设置这些 R2 资源，同时保留现有 Worker 域名绑定；`deploy:check` 只检查，不修改。
+
+例如遇到 `R2 生命周期规则 auto delete after 3 days 可能提前删除附件`，表示本次部署在新 Worker 上传和发布前已停止，前面的登录组织、域名和邮箱输出只是配置检查结果。进入 R2 → `tmpfile` → **Settings → Object lifecycle rules**，将冲突规则的保留时间改为至少 10 天，或将它的匹配范围限定为不覆盖 `attachment/` 的其他前缀，再重新部署。自动诊断会显示 `R2_LIFECYCLE`；最终出现 `部署完成：https://...` 才表示发布与线上检查都已通过。
+
+三项变量全部留空时，附件功能停用，其他发送和发件箱功能仍可使用。只填写一部分会在部署开始时报出缺少的变量。首次部署之后，打开写信页确认附件可选，并分别发送一份 PDF 传统附件和一份下载链接，确认真实 R2 上传及 Resend 下载均正常；只读部署检查只能确认配置和 Secret 存在，不能确认 S3 Key 权限或 Resend 是否能读取文件。
+
+上传 URL 有效期 15 分钟，限定文件大小、下载文件名及不覆盖已有对象；文件引用绑定登录邮箱、站点、Bucket 和账号，24 小时内可提交。Worker 在发送前通过 R2 HEAD 确认对象存在和大小。上传响应丢失时先检查 R2 是否已经收到文件；结果不确定的邮件重试复用文件引用、下载 URL 和 Resend 请求编号。不要在发送结果未确认时修改邮件内容；先重试或检查发件箱。文件不保存到 localStorage，刷新页面会丢失本地草稿和文件选择。
+
+R2 上传授权及上传确认按邮箱每个数据中心每分钟最多 10 次。浏览器上传需要 CORS 允许页面的精确来源、PUT 及 `Content-Type`、`Content-Disposition`、`If-None-Match` 请求头。浏览器自动设置参与签名的 `Content-Length`，前端不要自行设置该禁止修改的请求头。本地 `npm run dev` 模拟二进制上传与附件发送，只记录文件大小，不访问外部服务。
+
+参考：[Resend 附件](https://resend.com/docs/dashboard/emails/attachments)、[R2 临时签名 URL](https://developers.cloudflare.com/r2/api/s3/presigned-urls/)、[R2 CORS](https://developers.cloudflare.com/r2/buckets/cors/)。
 
 ### 发件箱
 
@@ -134,7 +199,7 @@ npm run deploy:check
 npm run deploy:worker
 ```
 
-通过 Workers Versions 上传代码、静态资源、环境变量和 Secret，再将本次版本发布到全部流量，保留现有自有域名绑定和路由。这种更新方式适合手动绑定域名后的修复，不需要 Zone → Workers Routes → Edit。Access 组织和 Resend 域名使用只读检查；登录方式发生变化时，会在新 Worker 发布后更新本项目的 Access 应用保护范围，因此仍需 Account → Access: Apps and Policies → Edit。缺少首次配置时，应先完成首次部署。更新失败的日志同样保存在 `.deploy/deploy.log`。
+通过 Workers Versions 上传代码、静态资源、环境变量和 Secret，再将本次版本发布到全部流量，保留现有自有域名绑定和路由。这种更新方式适合手动绑定域名后的修复，不需要 Zone → Workers Routes → Edit。Access 组织和 Resend 域名使用只读检查；启用附件时会配置 R2 Bucket、CORS 和清理规则。登录方式发生变化时，会在新 Worker 发布后更新本项目的 Access 应用保护范围，因此仍需 Account → Access: Apps and Policies → Edit。缺少首次配置时，应先完成首次部署。更新失败的日志同样保存在 `.deploy/deploy.log`。
 
 ```sh
 npm run deploy:diagnose
@@ -165,7 +230,7 @@ node --input-type=module -e 'try { const r = await fetch("https://api.resend.com
 
 发件地址在服务端从已验证的 Access JWT 或本站签名会话取得；前端无法覆盖。重复提交使用 Resend Idempotency-Key，内容不变的失败重试会复用编号。生产环境不持久保存邮件草稿或正文；发送成功表示 Resend 接受请求，不等同于已投递到收件箱。
 
-自动测试覆盖 JWT 签名与授权、静态资源保护、动态发件人、发送调用、重试、跨站请求、限流、发件箱归属检查、加密分页、读取权限错误及 DNS 冲突处理，并在 workerd 运行时验证实际公钥请求、两种登录、模拟发送、发件箱列表及详情、加密分页和拒绝上游重定向。运行时测试使用本地服务，不监听端口，不发送真实邮件。部署流程及真实 Resend 接口需要实际账号凭证和网络才能完成在线验证。
+自动测试覆盖 JWT 签名与授权、静态资源保护、动态发件人、发送调用、重试、跨站请求、限流、发件箱归属检查、加密分页、读取权限错误、R2 SigV4 签名、文件引用归属、大小限制、上传断线重试、HTML 文件名转义、存储部署及 DNS 冲突处理，并在 workerd 运行时验证实际公钥请求、两种登录、模拟发送、附件与下载链接、真实二进制流的本地上传、发件箱列表及详情、加密分页和拒绝上游重定向。运行时测试使用本地服务，不监听端口，不发送真实邮件。部署流程及真实 Resend 接口需要实际账号凭证和网络才能完成在线验证。
 
 受限命令执行环境可能同时禁止外网访问和监听本地端口。这种情况下单元测试与打包仍可运行；本地预览及在线部署需要在具备相应网络权限的终端中执行。Codex 的命令进程和普通终端可能采用不同权限；如果进程设置了 `CODEX_SANDBOX_NETWORK_DISABLED=1`，网络连接失败时脚本会明确提示此限制。切换 Bash 或重复安装 Wrangler 不会改变这项网络限制。
 
@@ -173,7 +238,7 @@ node --input-type=module -e 'try { const r = await fetch("https://api.resend.com
 
 | 目录 | 内容 |
 | --- | --- |
-| `src/` | Worker、Access JWT 验证、本站会话和发件箱读取 |
+| `src/` | Worker、Access JWT 验证、本站会话、R2 附件与签名和发件箱读取 |
 | `public/` | 登录页、邮件编辑页、发件箱和静态资源 |
 | `scripts/` | 部署、Access 配置迁移、域名验证和失败诊断 |
 | `test/` | Node.js 测试及 workerd 运行时测试 |

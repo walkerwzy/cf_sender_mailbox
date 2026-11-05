@@ -11,6 +11,7 @@ import { planAccessScope, applyAccessScope } from "./access-scope.mjs";
 import { getSessionSecret } from "./session-secret.mjs";
 import { makeApi } from "./api.mjs";
 import { runWrangler } from "./wrangler-command.mjs";
+import { r2Config, ensureAttachmentBucket, applyR2Config } from "./r2-setup.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const checkOnly = process.argv.includes("--check");
@@ -23,7 +24,7 @@ try { local = parseEnv(await readFile(resolve(root, ".env.deploy"), "utf8")); } 
 const config = { ...local, ...Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== "")) };
 // Reuse the existing full-access admin key unless a dedicated read key is supplied.
 const outboxReadKey = config.RESEND_READ_API_KEY || config.RESEND_ADMIN_API_KEY;
-const sensitive = [config.CLOUDFLARE_API_TOKEN, config.RESEND_API_KEY, config.RESEND_ADMIN_API_KEY, config.RESEND_READ_API_KEY, config.LOGIN_PASSWORD, config.SESSION_SECRET].filter(Boolean);
+const sensitive = [config.CLOUDFLARE_API_TOKEN, config.RESEND_API_KEY, config.RESEND_ADMIN_API_KEY, config.RESEND_READ_API_KEY, config.LOGIN_PASSWORD, config.SESSION_SECRET, config.R2_ACCESS_KEY_ID, config.R2_SECRET_ACCESS_KEY].filter(Boolean);
 const redact = (text) => sensitive.reduce((result, value) => result.replaceAll(value, "[REDACTED]"), String(text));
 
 function command(args, env = {}) {
@@ -33,6 +34,7 @@ function command(args, env = {}) {
 async function main() {
   if (checkOnly && workerOnly) throw new Error("--check 和 --worker-only 不能同时使用。");
   const loginMode = config.LOGIN_PASSWORD ? "dual" : "access";
+  const attachments = r2Config(config);
   if (config.LOGIN_PASSWORD?.length > 508) throw new Error("LOGIN_PASSWORD 最多 508 个字符。");
   const emails = [...new Set((config.ALLOWED_EMAILS || "admin@wzy.one,hi@wzy.one").split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean))];
   if (!emails.length || emails.some((email) => !/^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/.test(email))) throw new Error("ALLOWED_EMAILS 必须包含有效的登录邮箱。");
@@ -109,7 +111,9 @@ async function main() {
   console.log(`页面地址：https://${domain}`);
   console.log(loginMode === "dual" ? "登录方式：密码 + 北京时间 MMDD，或邮箱验证码。" : "登录方式：邮箱验证码。");
   console.log(`发件箱读取凭证：${config.RESEND_READ_API_KEY ? "RESEND_READ_API_KEY" : config.RESEND_ADMIN_API_KEY ? "复用 RESEND_ADMIN_API_KEY" : "复用 RESEND_API_KEY"}。`);
-  const onlineCheck = { cloudflare, accountId, domain, customDomain: Boolean(config.APP_DOMAIN), teamDomain, audience: app.aud, emails, loginMode, readApiKeyConfigured: Boolean(outboxReadKey) };
+  if (attachments) await ensureAttachmentBucket({ cloudflare, accountId, ...attachments, origin: `https://${domain}`, checkOnly });
+  else console.log("附件存储：未配置 R2，页面可继续发送无附件邮件。");
+  const onlineCheck = { cloudflare, accountId, domain, customDomain: Boolean(config.APP_DOMAIN), teamDomain, audience: app.aud, emails, loginMode, readApiKeyConfigured: Boolean(outboxReadKey), attachmentBucket: attachments?.bucketName };
   if (checkOnly) {
     await checkWorkerDeployment(onlineCheck);
     await checkAnonymousAccess({ domain, teamDomain, loginMode });
@@ -134,6 +138,7 @@ async function main() {
   const configPath = resolve(root, workerOnly ? ".deploy/wrangler-worker.json" : ".deploy/wrangler.json");
   const secretPath = resolve(root, ".deploy/secrets.json");
   const workerSecrets = { RESEND_API_KEY: config.RESEND_API_KEY };
+  applyR2Config(wrangler, workerSecrets, config, accountId);
   if (outboxReadKey) workerSecrets.RESEND_READ_API_KEY = outboxReadKey;
   if (loginMode === "dual") {
     workerSecrets.LOGIN_PASSWORD = config.LOGIN_PASSWORD;

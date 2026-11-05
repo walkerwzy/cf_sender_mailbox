@@ -7,7 +7,7 @@
     <title>私人邮局 · walker</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
-    <script src="/app.js" defer></script>
+    <script src="/app.js" type="module"></script>
   </head>
   <body>
     <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -69,6 +69,12 @@
             <div class="editor-toolbar"><div class="format-control" role="group" aria-label="正文格式"><button id="text-format" type="button" class="format-button active" aria-pressed="true" data-format="text">纯文本</button><button id="html-format" type="button" class="format-button" aria-pressed="false" data-format="html"><span class="code-icon">&lt;/&gt;</span> HTML</button></div><span id="format-hint">简单、清晰，专注于内容</span></div>
             <label class="sr-only" for="body">邮件正文</label>
             <textarea id="body" name="body" placeholder="你好，&#10;&#10;从这里开始写一封邮件…" required maxlength="60000" spellcheck="true"></textarea>
+            <div class="attachments-panel">
+              <div class="attachments-toolbar"><strong>附件</strong><button id="add-files" class="text-button" type="button" disabled>＋ 添加文件</button><input id="files" type="file" multiple hidden/><label for="attachment-mode" class="sr-only">文件发送方式</label><select id="attachment-mode" disabled><option value="attachment">传统附件（默认）</option><option value="link">下载链接（大文件）</option></select></div>
+              <p id="attachment-hint" class="attachment-hint">正在读取附件配置…</p>
+              <ul id="attachment-list" class="attachment-list" aria-label="待发送文件" aria-live="polite"></ul>
+              <p id="attachment-total" class="attachment-hint" hidden></p>
+            </div>
             <div class="compose-footer"><div class="footer-actions"><button id="send-button" class="send-button" type="submit" disabled><svg class="icon"><use href="#i-send"/></svg><span id="send-label">发送邮件</span></button><button id="clear-button" class="text-button clear-button" type="button">清空</button></div><span class="character-count"><span id="character-count">0</span><span> / 60,000</span></span></div>
           </form>
 

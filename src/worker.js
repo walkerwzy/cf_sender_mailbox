@@ -1,6 +1,7 @@
 import { HttpError, verifyAccess } from "./access.js";
 import { ACCESS_LOGIN_PATH, allowedEmails, beijingDay, clearSessionCookie, dualLogin, issueSession, passwordMatches, requireSessionConfig, verifyIdentity } from "./session.js";
 import { listOutbox, getOutboxMail } from "./outbox.js";
+import { ATTACHMENT_LIMITS, attachmentConfigured, createUploads, checkUploads, prepareMailAttachments } from "./attachments.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const EMAIL = /^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/;
@@ -17,9 +18,10 @@ function json(data, status = 200, extraHeaders = {}) {
   return Response.json(data, { status, headers: extraHeaders });
 }
 
-function secure(response) {
+function secureResponse(response, env) {
   const result = new Response(response.body, response);
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) result.headers.set(name, value);
+  if (attachmentConfigured(env)) result.headers.set("Content-Security-Policy", SECURITY_HEADERS["Content-Security-Policy"].replace("connect-src 'self'", `connect-src 'self' https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`));
   return result;
 }
 
@@ -103,7 +105,7 @@ async function sendMail(mail, key, env) {
       method: "POST",
       headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json", "Idempotency-Key": key },
       body: JSON.stringify(mail),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(mail.attachments?.length ? 45000 : 15000),
       // Keep credentials and mail on this origin; Workers has no "error" mode.
       redirect: "manual",
     });
@@ -114,7 +116,8 @@ async function sendMail(mail, key, env) {
     if (response.status === 429) throw new HttpError(429, "发件服务繁忙，请稍后重试。");
     if (response.status === 409) throw new HttpError(409, "重试内容发生变化，请修改邮件后重新发送。");
     if (response.status === 401 || response.status === 403) throw new HttpError(502, "发件服务授权失败，请检查 API Key 和发件域名。");
-    if (response.status === 422 || response.status === 400) throw new HttpError(502, "发件服务未接受邮件，请检查发件域名和邮件内容。");
+    if (response.status === 413) throw new HttpError(413, "发件服务认为邮件过大，请减少正文或附件后重试。");
+    if (response.status === 422 || response.status === 400) throw new HttpError(502, "发件服务未接受邮件，请检查发件域名、邮件内容或附件格式。");
     throw new HttpError(502, "发件服务暂时不可用，请稍后重试。");
   }
   let data;
@@ -125,6 +128,7 @@ async function sendMail(mail, key, env) {
 
 export async function handleRequest(request, env, ctx, options = {}) {
   const url = new URL(request.url);
+  const secure = (response) => secureResponse(response, env);
   try {
     const dual = dualLogin(env);
     const now = options.now ?? Math.floor(Date.now() / 1000);
@@ -178,7 +182,20 @@ export async function handleRequest(request, env, ctx, options = {}) {
     }
     const from = `${name} <${identity.email}>`;
     if (url.pathname === "/api/session" && request.method === "GET") {
-      return secure(json({ email: identity.email, from, preview: Boolean(options.preview), ready: Boolean(options.preview || env.RESEND_API_KEY), loginMethod: identity.method || (options.preview ? "preview" : "access") }));
+      return secure(json({ email: identity.email, from, preview: Boolean(options.preview), ready: Boolean(options.preview || env.RESEND_API_KEY), loginMethod: identity.method || (options.preview ? "preview" : "access"), attachmentLimits: ATTACHMENT_LIMITS, attachmentReady: Boolean(options.preview || attachmentConfigured(env)) }));
+    }
+    if (["/api/attachments/uploads", "/api/attachments/complete"].includes(url.pathname)) {
+      if (request.method !== "POST") return secure(json({ error: "请使用 POST 创建附件上传。" }, 405, { Allow: "POST" }));
+      sameOrigin();
+      if (!options.preview && !attachmentConfigured(env)) throw new HttpError(503, "附件服务尚未配置，请联系管理员。");
+      if (!env.UPLOAD_RATE_LIMITER) throw new HttpError(503, "附件上传服务尚未配置。");
+      const { success } = await env.UPLOAD_RATE_LIMITER.limit({ key: identity.email });
+      if (!success) return secure(json({ error: "创建上传过于频繁，请一分钟后重试。" }, 429, { "Retry-After": "60" }));
+      const data = await readJson(request, url.pathname.endsWith("/uploads") ? 8192 : 32 * 1024);
+      const result = url.pathname.endsWith("/uploads")
+        ? await (options.createUploads ?? createUploads)(data?.files, data?.mode || "attachment", identity.email, url.origin, env, now)
+        : await checkUploads(data?.attachments, data?.mode || "attachment", identity.email, url.origin, env, now);
+      return secure(json(result));
     }
     if (url.pathname === "/api/outbox" || url.pathname.startsWith("/api/outbox/")) {
       if (request.method !== "GET") return secure(json({ error: "请使用 GET 读取发件箱。" }, 405, { Allow: "GET" }));
@@ -199,10 +216,12 @@ export async function handleRequest(request, env, ctx, options = {}) {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(idempotencyKey || "")) {
         throw new HttpError(400, "缺少有效的发送请求编号，请刷新页面后重试。");
       }
-      const mail = validateMail(await readJson(request), from);
+      const data = await readJson(request);
+      let mail = validateMail(data, from);
       if (!env.SEND_RATE_LIMITER) throw new HttpError(503, "发件服务暂时不可用。");
       const { success } = await env.SEND_RATE_LIMITER.limit({ key: identity.email });
       if (!success) return secure(json({ error: "发送过于频繁，每分钟最多 5 封，请稍后重试。" }, 429, { "Retry-After": "60" }));
+      mail = await prepareMailAttachments(mail, data.attachments, data.attachmentMode || "attachment", identity.email, url.origin, env, now);
       // Scope the provider key to the signed-in user; two users cannot collide.
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${identity.email}:${idempotencyKey}`));
       const scopedKey = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");

@@ -1,3 +1,5 @@
+import { AttachmentQueue, fileSize } from "./attachments.js";
+
 const $ = (id) => document.getElementById(id);
 const form = $("mail-form");
 const sendButton = $("send-button");
@@ -13,6 +15,50 @@ let outboxCount = 0;
 let detailRequest = 0;
 let detailMail;
 const outboxIds = new Set();
+const attachments = new AttachmentQueue({ changed: renderAttachments });
+
+function renderAttachments() {
+  $("attachment-list").replaceChildren();
+  for (const item of attachments.items) {
+    const row = document.createElement("li");
+    const description = document.createElement("span");
+    const name = document.createElement("strong");
+    name.textContent = item.file.name;
+    const status = document.createElement("small");
+    status.textContent = `${fileSize(item.file.size)} · ${item.status}`;
+    description.append(name, status);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "text-button";
+    remove.textContent = "移除";
+    remove.setAttribute("aria-label", `移除 ${item.file.name}`);
+    remove.disabled = sending;
+    remove.addEventListener("click", () => { if (!sending) { attachments.remove(item.id); onEdit(); } });
+    row.append(description, remove);
+    $("attachment-list").append(row);
+  }
+  $("attachment-total").hidden = !attachments.items.length;
+  $("attachment-total").textContent = `${attachments.items.length} 个文件 · 合计 ${fileSize(attachments.items.reduce((total, item) => total + item.file.size, 0))}`;
+  $("add-files").disabled = sending || !attachments.ready;
+  $("files").disabled = sending || !attachments.ready;
+  $("attachment-mode").disabled = sending || !attachments.ready;
+  $("attachment-hint").textContent = !attachments.ready ? "附件服务尚未配置，可继续发送无附件邮件。" : attachments.mode === "link" ? "最多 10 个文件，合计 100 MiB；收件人通过链接下载，有效期 7 天，持有链接即可访问。" : "最多 10 个文件，合计 25 MiB；更大的文件可切换为下载链接。";
+}
+
+$("add-files").addEventListener("click", () => $("files").click());
+$("files").addEventListener("change", () => {
+  if (sending) return;
+  try { attachments.add([...$("files").files]); onEdit(); }
+  catch (error) { showNotice(error.message, true); }
+  $("files").value = "";
+});
+$("attachment-mode").addEventListener("change", () => {
+  if (sending) return;
+  attachments.mode = $("attachment-mode").value;
+  onEdit();
+  renderAttachments();
+  try { attachments.validate(); } catch (error) { showNotice(error.message, true); }
+});
 const mailEvents = { sent: "已发送", delivered: "已投递", delivery_delayed: "投递延迟", opened: "已打开", clicked: "已点击", bounced: "已退信", complained: "被投诉", failed: "发送失败", canceled: "已取消", scheduled: "待发送", queued: "排队中", suppressed: "已拦截" };
 
 function mailTime(value) {
@@ -205,7 +251,9 @@ function updateButton() {
 }
 
 function onEdit() {
+  if (sending) return;
   requestId = undefined;
+  attachments.emailAttempted = false;
   sent = false;
   $("character-count").textContent = new Intl.NumberFormat("zh-CN").format($("body").value.length);
   if (session?.ready && !sending) $("notice").hidden = true;
@@ -238,8 +286,10 @@ $("toggle-extra").addEventListener("click", () => {
 
 $("clear-button").addEventListener("click", () => {
   if (sending) return;
-  if (["to", "cc", "bcc", "reply-to", "subject", "body"].some((id) => $(id).value) && !confirm("清空这封邮件的全部内容？")) return;
+  if ((attachments.items.length || ["to", "cc", "bcc", "reply-to", "subject", "body"].some((id) => $(id).value)) && !confirm("清空这封邮件的全部内容和附件？")) return;
   form.reset();
+  attachments.mode = "attachment";
+  attachments.clear();
   onEdit();
   $("to").focus();
 });
@@ -266,13 +316,21 @@ form.addEventListener("submit", async (event) => {
   sending = true;
   updateButton();
   // Keep retries identical while the provider request is in flight.
-  form.querySelectorAll("input, textarea, [data-format]").forEach((element) => { element.disabled = true; });
+  form.querySelectorAll("input, textarea, select, [data-format]").forEach((element) => { element.disabled = true; });
+  renderAttachments();
+  let mailAttempted = false;
   try {
+    if (attachments.items.length) showNotice("正在上传文件，完成后自动发送邮件…");
+    const refs = await attachments.prepare();
+    if (refs.length) { payload.attachments = refs; payload.attachmentMode = attachments.mode; }
+    mailAttempted = true;
+    attachments.emailAttempted = true;
+    showNotice("文件已准备好，正在提交邮件…");
     const response = await fetch("/api/send", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Idempotency-Key": submissionId },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(22000),
+      signal: AbortSignal.timeout(refs.length && attachments.mode === "attachment" ? 55000 : 22000),
     });
     if (response.redirected || !response.headers.get("content-type")?.includes("application/json")) {
       throw new Error("登录可能已过期，请保留邮件内容并重新登录。");
@@ -283,11 +341,12 @@ form.addEventListener("submit", async (event) => {
     outboxLoaded = false;
     showNotice(result.preview ? `本地预览成功，未发送真实邮件。编号：${result.id}` : `邮件已提交发送。邮件编号：${result.id}`);
   } catch (error) {
-    const message = error.name === "TimeoutError" || error.name === "TypeError" ? "发送结果暂时无法确认，请保持内容不变并重试。" : error.message;
+    const message = !mailAttempted ? `邮件尚未提交：${["TimeoutError", "TypeError"].includes(error.name) ? "附件连接暂时失败，请重试。" : error.message}` : error.name === "TimeoutError" || error.name === "TypeError" ? "发送结果暂时无法确认，请保持内容不变并重试。" : error.message;
     showNotice(message, true);
   } finally {
     sending = false;
-    form.querySelectorAll("input, textarea, [data-format]").forEach((element) => { element.disabled = false; });
+    form.querySelectorAll("input, textarea, select, [data-format]").forEach((element) => { element.disabled = false; });
+    renderAttachments();
     updateButton();
     selectView();
   }
@@ -300,6 +359,9 @@ async function init() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "无法读取登录信息。");
     session = data;
+    attachments.ready = data.attachmentReady;
+    attachments.limits = data.attachmentLimits;
+    renderAttachments();
     $("account-email").textContent = data.email;
     $("sender").textContent = data.from;
     $("domain").textContent = data.email.split("@")[1];

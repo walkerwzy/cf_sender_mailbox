@@ -25,11 +25,19 @@ export function diagnoseDeployment(deploymentLog, wranglerLog = "") {
   if (/^Resend[^\r\n]*失败（(?:401|403)）/m.test(deploymentLog)) {
     return { code: "RESEND_PERMISSION", message: "Resend Key 无效或无法管理域名。请检查 RESEND_API_KEY；域名配置使用的 RESEND_ADMIN_API_KEY 需要 Full access。" };
   }
+  const r2Failure = [...deploymentLog.matchAll(/^Cloudflare [A-Z]+ \/accounts\/([a-f0-9]{32})\/r2\/buckets(?:\/[^\s]*)? 失败（(?:401|403)）/gmi)].at(-1);
+  if (r2Failure) {
+    return { code: "R2_PERMISSION", message: `R2 管理 API 拒绝了部署凭证 CLOUDFLARE_API_TOKEN。个人 Token 的 UI 入口为右上角头像 → My Profile → API Tokens；账号 Token 为左侧 Manage Account → Account API Tokens。请按此部署 Token 的归属找到它，检查 Account → Workers R2 Storage → Edit，Account Resources 范围需包含账号 ${r2Failure[1]}。找不到旧 Token 时可按 README 权限表创建命名为 sendmail-cf-deploy 的个人部署 Token，并更新本地配置。同时确认 Bucket 属于该账号、Token 未过期且当前环境变量没有覆盖 .env.deploy 中的新 Token。R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY 用于 S3 文件读写，不能代替这项管理权限；Token 验证为 active 也不能证明它有 R2 权限。` };
+  }
   if (/^Cloudflare[^\r\n]*失败（(?:401|403)）/m.test(deploymentLog)) {
     return { code: "CF_PERMISSION", message: "Cloudflare 拒绝当前 Token。请按上方失败的 API 路径检查对应权限、账号和域名范围。" };
   }
   if (/(?:Cloudflare|Resend)[^\r\n]*失败（(?:429|500|502|503|504)）/.test(deploymentLog)) {
     return { code: "PROVIDER_TEMPORARY", message: "API 返回了限流或暂时性服务错误。只读请求已有限重试，请稍后重新运行部署。" };
+  }
+  const lifecycleFailure = /^R2 生命周期规则 (.+?) 可能提前删除附件。/m.exec(deploymentLog);
+  if (lifecycleFailure) {
+    return { code: "R2_LIFECYCLE", message: `部署未完成：R2 规则「${lifecycleFailure[1]}」可能提前删除 attachment/ 下的文件，检查已在新 Worker 上传和发布前停止。请在 Bucket 的 Settings → Object lifecycle rules 中，将这条规则的保留时间设为至少 10 天，或将它限定到不覆盖 attachment/ 的其他前缀，再重新部署。邮件中的签名下载链接有效 7 天；新增 10 天清理规则无法覆盖更早的删除规则。` };
   }
   if (/验证仍在进行中/.test(deploymentLog)) {
     return { code: "DNS_PENDING", message: "发送 DNS 已配置，等待传播完成后重新运行 npm run deploy 即可。" };
@@ -44,7 +52,7 @@ async function readOptional(path) {
 
 async function main() {
   const env = parseEnv(await readOptional(".env.deploy"));
-  const names = ["CLOUDFLARE_API_TOKEN", "RESEND_API_KEY", "RESEND_ADMIN_API_KEY", "RESEND_READ_API_KEY", "LOGIN_PASSWORD", "SESSION_SECRET"];
+  const names = ["CLOUDFLARE_API_TOKEN", "RESEND_API_KEY", "RESEND_ADMIN_API_KEY", "RESEND_READ_API_KEY", "LOGIN_PASSWORD", "SESSION_SECRET", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"];
   const secrets = [...names.flatMap((name) => [env[name], process.env[name]]), await readOptional(".deploy/session-secret")].filter(Boolean);
   const deploymentLog = await readOptional(".deploy/deploy.log");
   const wranglerLog = await readOptional(".deploy/wrangler.log");

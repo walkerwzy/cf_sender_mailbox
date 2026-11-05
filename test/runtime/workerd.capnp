@@ -9,8 +9,11 @@ const config :Workerd.Config = (
       modules = [
         (name = "test/runtime/runtime-tests.js", esModule = embed "runtime-tests.js"),
         (name = "src/worker.js", esModule = embed "../../src/worker.js"),
+        (name = "src/dev-worker.js", esModule = embed "../../src/dev-worker.js"),
         (name = "src/session.js", esModule = embed "../../src/session.js"),
         (name = "src/outbox.js", esModule = embed "../../src/outbox.js"),
+        (name = "src/attachments.js", esModule = embed "../../src/attachments.js"),
+        (name = "src/r2-signing.js", esModule = embed "../../src/r2-signing.js"),
         (name = "src/access.js", esModule = embed "../../src/access.js")
       ],
       globalOutbound = "mock-upstream",
